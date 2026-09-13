@@ -8,7 +8,7 @@ from redis.commands.core import Script
 LUA_SCRIPT = """
 local current = redis.call('GET', KEYS[1])
 
-if not current or tonumbers(ARGV[1]) > tonumber(current) then
+if not current or tonumber(ARGV[1]) > tonumber(current) then
     redis.call('SET', KEYS[1], ARGV[1])
     return 1
 else
@@ -25,6 +25,13 @@ class RedisHub:
 
         self.timestamp = TimeStamp(self)
         self.session = Session(self)
+
+    async def __aenter__(self):
+        await self.connect()
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        await self.disconnect()
 
     async def connect(self) -> None:
         self._pool = aioredis.ConnectionPool.from_url(
@@ -55,6 +62,26 @@ class RedisHub:
 class TimeStamp:
     def __init__(self, hub: RedisHub):
         self.hub = hub
+
+    async def update(self, target: str, new_ts: int | float) -> bool:
+        if not self.hub._script:
+             raise RuntimeError(
+                 "RedisHub не инициализирован"
+             )
+
+        key = f"parser:last_seen:{target}"
+        result = await self.hub._script(keys=[key], args=[new_ts])
+        return bool(result)
+
+    async def last(self, target: str) -> int | None:
+        if not self.hub._script:
+            raise RuntimeError(
+                "RedisHub не инициализирован"
+            )
+
+        key = f"parser:last_seen:{target}"
+        result = await self.hub.client.get(key)
+        return int(result) if result is not None else None
 
 class Session:
     def __init__(self, hub: RedisHub):
