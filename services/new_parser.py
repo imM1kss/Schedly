@@ -12,11 +12,13 @@ from services.logging_config import setup_logging
 from logging import getLogger
 from typing import List, Optional
 from vkbottle_types.objects import WallWallpostFull
+from services.redis_hub import RedisHub
 
 #base funcs
 load_dotenv()
 setup_logging()
 log = getLogger("parser")
+rhub = RedisHub()
 
 #const
 TOKEN = getenv("access_token")
@@ -28,70 +30,48 @@ api = API(token=TOKEN)
 api.API_URL = GATEWAY_API
 
 #cache service
-class WallCache:
-    def __init__(self, api: API,ttl: int = 100):
-        self.api = api
-        self.ttl = ttl
+async def get_posts(
+    api: API,
+    group_id: int,
+    count: int = 5,
+    ttl: int = 100
+) -> List[dict]:
 
-        self._cached_posts: List[WallWallpostFull] = []
-        self._last_updated: float = 0.0
-        self._lock = asyncio.Lock()
+    cache_key = f"cache:vk:wall:{group_id}"
 
-    async def get_posts(
-            self,
-            count: int = 1,
-            force_refresh: bool = False
-    ) -> List[WallWallpostFull]:
-        # current time 
-        cur_time = time.monotonic()
+    cached_posts = await rhub.cache.get_json(cache_key)
+    if cached_posts:
+        log.info(f"[CACHE] Return {count} posts from Redis cache")
+        return cached_posts[:count]
 
-        #if cache is frash give it without lock
-        if not force_refresh and (cur_time - self._last_updated < self.ttl):
-            print("return cache")
-            return self._cached_posts[:count]
-        
+    response = await api.wall.get(
+        owner_id = -group_id,
+        count = count
+    )
 
-        async with self._lock:
-            cur_time = time.monotonic()
-            if not force_refresh and (cur_time - self._last_updated < self.ttl):
-                print("return cache")
-                return self._cached_posts[:count]
+    posts_data = [post.model_dump() for post in response.items]
 
-             # getting group id
-            group_id_response = await self.api.groups.get_by_id(group_id=GROUP_ID)
-            if group_id_response and group_id_response.groups:
-                group = group_id_response.groups[0]  # take the first group from .groups list
-                group_id = group.id # call .id attribute
-            
+    await rhub.cache.set_json(cache_key, posts_data, ttl=ttl)
+    log.info(f"[CAHCE] The parser downloaded data from VK wall and cached it in Redis")
 
-             #response to vk wall
-            response = await self.api.wall.get(
-                owner_id = -group_id,
-                count=count
-            )
-
-            self._cached_posts = response.items
-            self._last_updated = cur_time
-            log.info("[CACHE] parser cached new data from vk wall")
-
-            return self._cached_posts[:count]
-
-#init cache service
-Cache = WallCache(api)
+    return posts_data[:count]
 
 
 
 async def run_parser():
-    while True:
-        try:
-            # main code
-            print(await Cache.get_posts())
+    async with rhub:
+        while True:
+            try:
+                # main code
+                group_id = int(GROUP_ID) if GROUP_ID.isdigit() else 12345678
+                posts = await get_posts(api, group_id, count=5)
+                print(posts)
 
-        # Exception handler 
-        except Exception:
-            log.exception("Exception: ")
+            # Exception handler 
+            except Exception:
+                log.exception("Exception: ")
 
-        await asyncio.sleep(100)
+            await asyncio.sleep(100)
 
 if __name__ == "__main__":
     try:

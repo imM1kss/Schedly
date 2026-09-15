@@ -547,7 +547,7 @@ async def download_photo(url):
         logger.exception("Ошибка при загрузке фото: ")
 
 async def get_all_texts_recursive(msg) -> list:
-    """Рекурсивно собирает текст из самого сообщения, ответов и пересланных сообщений."""
+    
     texts = []
     
     # 1. Забираем текст текущего сообщения (если он есть)
@@ -568,7 +568,7 @@ async def get_all_texts_recursive(msg) -> list:
     return texts
 
 async def get_all_photos_recursive(msg) -> list:
-    """Рекурсивно собирает URL всех фотографий из сообщения и пересылок."""
+    "
     photo_urls = []
 
     # 1. Ищем фото в текущем сообщении

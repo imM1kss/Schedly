@@ -38,7 +38,8 @@ class RedisHub:
         self._pool = aioredis.ConnectionPool.from_url(
             self._url,
             max_connections = 20,
-            decode_responses = True
+            decode_responses = True,
+            protocol = 2
         )
         self._client = aioredis.Redis(connection_pool=self._pool)
 
@@ -56,7 +57,7 @@ class RedisHub:
     def client(self) -> aioredis.Redis:
         if not self._client:
             raise RuntimeError(
-                "RedisHub не инициализирован. Вызовите await RedisHub.connect()"
+                "RedisHub not initialized"
             )
         return self._client
 
@@ -67,7 +68,7 @@ class TimeStamp:
     async def update(self, target: str, new_ts: int | float) -> bool:
         if not self.hub._script:
              raise RuntimeError(
-                 "RedisHub не инициализирован"
+                 "RedisHub not initialized"
              )
 
         key = f"parser:last_seen:{target}"
@@ -77,7 +78,7 @@ class TimeStamp:
     async def last(self, target: str) -> int | None:
         if not self.hub._script:
             raise RuntimeError(
-                "RedisHub не инициализирован"
+                "RedisHub not initialized"
             )
 
         key = f"parser:last_seen:{target}"
@@ -92,4 +93,24 @@ class Cache:
     def __init__(self, hub: RedisHub):
         self.hub = hub
 
-    async def 
+    async def get_json(self, key:str) -> Any | None:
+
+        if not self.hub._client:
+            raise RuntimeError("RedisHub not initialized")
+
+        data = await self.hub.client.get(key)
+        if data:
+            return json.loads(data)
+        return
+    
+
+    async def set_json(self, key:str, value: Any, ttl:int = 100) -> None:
+
+        if not self.hub._client:
+            raise RuntimeError("RedisHub not initialized")
+
+        data = json.dumps(value, ensure_ascii=False, default=str)
+        await self.hub.client.set(key, data, ex=ttl)
+
+
+        
