@@ -39,7 +39,7 @@ class WallCache:
 
     async def get_posts(
             self,
-            count: int = 5,
+            count: int = 1,
             force_refresh: bool = False
     ) -> List[WallWallpostFull]:
         # current time 
@@ -47,12 +47,15 @@ class WallCache:
 
         #if cache is frash give it without lock
         if not force_refresh and (cur_time - self._last_updated < self.ttl):
+            print("return cache")
             return self._cached_posts[:count]
+        
 
         async with self._lock:
             cur_time = time.monotonic()
             if not force_refresh and (cur_time - self._last_updated < self.ttl):
-                        return self._cached_posts[:count]
+                print("return cache")
+                return self._cached_posts[:count]
 
              # getting group id
             group_id_response = await self.api.groups.get_by_id(group_id=GROUP_ID)
@@ -76,11 +79,12 @@ class WallCache:
 #init cache service
 Cache = WallCache(api)
 
+
+
 async def run_parser():
     while True:
         try:
             # main code
-
             print(await Cache.get_posts())
 
         # Exception handler 

@@ -25,6 +25,7 @@ class RedisHub:
 
         self.timestamp = TimeStamp(self)
         self.session = Session(self)
+        self.cache = Cache(self)
 
     async def __aenter__(self):
         await self.connect()
@@ -86,3 +87,9 @@ class TimeStamp:
 class Session:
     def __init__(self, hub: RedisHub):
         self.hub = hub
+
+class Cache:
+    def __init__(self, hub: RedisHub):
+        self.hub = hub
+
+    async def 
