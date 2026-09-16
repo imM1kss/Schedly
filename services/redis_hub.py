@@ -2,18 +2,28 @@
 import json
 import redis.asyncio as aioredis
 
-from typing import Any
+from typing import Any, List
 from redis.commands.core import Script
 
 LUA_SCRIPT = """
-local current = redis.call('GET', KEYS[1])
+-- KEYS[1] - list key
+-- ARGV[1] - .doc id
+-- ARGV[2] - max list length (100)
+local items = redis.call('LRANGE', KEYS[1], 0, -1)
 
-if not current or tonumber(ARGV[1]) > tonumber(current) then
-    redis.call('SET', KEYS[1], ARGV[1])
-    return 1
-else
-    return 0
+for i, v in ipairs(items) do
+    if v == ARGV[1] then
+        return 0
+    end
 end
+
+redis.call('RPUSH', KEYS[1], ARGV[1])
+
+if redis.call('LLEN', KEYS[1]) > tonumber(ARGV[2]) then
+    redis.call('LPOP', KEYS[1])
+end
+
+return 1
 """
 
 class RedisHub:
@@ -23,7 +33,7 @@ class RedisHub:
         self._client: aioredis.Redis | None = None
         self._script: Script | None = None
 
-        self.timestamp = TimeStamp(self)
+        self.loadhistory = DownloadHistory(self)
         self.session = Session(self)
         self.cache = Cache(self)
 
@@ -61,21 +71,21 @@ class RedisHub:
             )
         return self._client
 
-class TimeStamp:
+class DownloadHistory:
     def __init__(self, hub: RedisHub):
         self.hub = hub
 
-    async def update(self, target: str, new_ts: int | float) -> bool:
+    async def check(self, target: str, doc_id: str | int, limit: int = 100) -> bool:
         if not self.hub._script:
              raise RuntimeError(
                  "RedisHub not initialized"
              )
 
-        key = f"parser:last_seen:{target}"
-        result = await self.hub._script(keys=[key], args=[new_ts])
+        key = f"parser:history:{target}"
+        result = await self.hub._script(keys=[key], args=[str(doc_id), limit])
         return bool(result)
 
-    async def last(self, target: str) -> int | None:
+    async def get(self, target: str) -> int | None:
         if not self.hub._script:
             raise RuntimeError(
                 "RedisHub not initialized"
@@ -113,4 +123,4 @@ class Cache:
         await self.hub.client.set(key, data, ex=ttl)
 
 
-        
+      
