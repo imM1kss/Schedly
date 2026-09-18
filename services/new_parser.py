@@ -12,10 +12,11 @@ from dotenv import load_dotenv
 from os import getenv
 from services.logging_config import setup_logging
 from logging import getLogger
-from typing import List, Optional
+from typing import List
 from vkbottle_types.objects import WallWallpostFull
 from services.redis_hub import RedisHub
 from urllib.parse import quote
+from vkbottle.http import AiohttpClient
 
 
 #base funcs
@@ -32,6 +33,8 @@ YCF_PROXY_URL = getenv("YCF_PROXY_URL")
 YCF_SECRET = getenv("YCF_SECRET")
 
 #vk api
+
+
 api = API(token=TOKEN)
 api.API_URL = VK_GATEWAY_API
 
@@ -96,27 +99,34 @@ async def download_docx(title: str, url: str) -> Document | None:
     headers = {
         "x-proxy-secret": YCF_SECRET
     }
+    for att in range(3):
+        try:
+            connector = aiohttp.TCPConnector(force_close=True, enable_cleanup_closed=True)
+            async with aiohttp.ClientSession(connector=connector) as session:
 
-    async with aiohttp.ClientSession() as session:
+                async with session.get(request_url, headers=headers) as response:
+                    if response.status == 403:
+                        log.error("YCF access denied (Invalid Secret Code)")
+                        return None
+                    elif response.status != 200:
+                        log.error(f"Error proxing {title}. Status YCF {response.status}")
+                        return None
 
-        async with session.get(request_url, headers=headers) as response:
-            if response.status == 403:
-                log.error("YCF access denied (Invalid Secret Code)")
-                return None
-            elif response.status != 200:
-                log.error(f"Error proxing {title}. Status YCF {response.status}")
-                return None
+                    file_bytes = await response.read()
 
-            file_bytes = await response.read()
-
-    virtual_file = io.BytesIO(file_bytes)
-    try:
-        doc = Document(virtual_file)
-        log.info(f"Document {title} downloaded succesful")
-        return doc
-    except Exception:
-        log.exception(f"{title} parsing failed")
-        return None
+            virtual_file = io.BytesIO(file_bytes)
+            doc = Document(virtual_file)
+            if doc:
+                log.info(f"Document {title} downloaded succesful")
+                return doc
+        except (aiohttp.ClientError, ConnectionResetError) as e:
+            log.warning(f"Network error during download {title} | {att} atts/3")
+            await asyncio.sleep(2)
+        except Exception:
+            log.exception(F"Critical error during read {title}: ")
+            return None
+    log.error(f"Failed to download {title} after 3 attemps")
+    return None
 
 
 
@@ -135,6 +145,7 @@ async def run_parser():
                     doc = await download_docx(title=fl["title"], url=fl["url"])
                     if doc:
                         log.info(f"Ready to parse tables from {fl["title"]}")
+
 
 
 

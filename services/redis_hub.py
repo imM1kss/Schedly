@@ -6,24 +6,17 @@ from typing import Any, List
 from redis.commands.core import Script
 
 LUA_SCRIPT = """
--- KEYS[1] - list key
+-- KEYS[1] - cached id key
 -- ARGV[1] - .doc id
--- ARGV[2] - max list length (100)
-local items = redis.call('LRANGE', KEYS[1], 0, -1)
 
-for i, v in ipairs(items) do
-    if v == ARGV[1] then
-        return 0
-    end
+local current = redis.call('GET', KEYS[1])
+
+if not current or tonumber(ARGV[1]) > tonumber(current) then
+    redis.call("SET", KEYS[1], ARGV[1])
+    return 1
+else
+    return 0
 end
-
-redis.call('RPUSH', KEYS[1], ARGV[1])
-
-if redis.call('LLEN', KEYS[1]) > tonumber(ARGV[2]) then
-    redis.call('LPOP', KEYS[1])
-end
-
-return 1
 """
 
 class RedisHub:
@@ -76,13 +69,14 @@ class DownloadHistory:
         self.hub = hub
 
     async def check(self, target: str, doc_id: str | int, limit: int = 100) -> bool:
+        ''' comparing cached doc ID and ours '''
         if not self.hub._script:
              raise RuntimeError(
                  "RedisHub not initialized"
              )
 
-        key = f"parser:history:{target}"
-        result = await self.hub._script(keys=[key], args=[str(doc_id), limit])
+        key = f"parser:last_id:{target}"
+        result = await self.hub._script(keys=[key], args=[doc_id])
         return bool(result)
 
     async def get(self, target: str) -> int | None:
@@ -91,7 +85,7 @@ class DownloadHistory:
                 "RedisHub not initialized"
             )
 
-        key = f"parser:last_seen:{target}"
+        key = f"parser:last_id:{target}"
         result = await self.hub.client.get(key)
         return int(result) if result is not None else None
 

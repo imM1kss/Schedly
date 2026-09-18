@@ -294,6 +294,19 @@ class ArchiveHomeworkModel(BaseModel):
         nullable=False
     )
 
+class DownloadHistoryModel(BaseModel):
+    __tablename__ = "download_history"
+
+    id: Mapped[int] = mapped_column(
+        primary_key=True,
+        autoincrement=True
+    )
+    doc_id:Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+        unique=True
+    )
+
 
 #----------REPOS-----------
 
@@ -441,9 +454,12 @@ class HomeworkRepository(BaseRepository[HomeworkModel]):
 
 
 class ArchiveRepository(BaseRepository[ArchiveHomeworkModel]):
-    def __init__(self, model, session):
-        super().__init__(model, session)
+    def __init__(self, session:AsyncSession):
+        super().__init__(ArchiveHomeworkModel, session)
 
+class DownloadHistoryRepository(BaseRepository[DownloadHistoryModel]):
+    def __init__(self, session:AsyncSession):
+        super().__init__(DownloadHistoryModel, session)
 
 class Database:
     def __init__(self, session: AsyncSession):
@@ -456,3 +472,4 @@ class Database:
         self.grades = GradeRepository(session=self.session)
         self.homework = HomeworkRepository(session=self.session)
         self.archive_homework = ArchiveRepository(session=self.session)
+        self.download_history = DownloadHistoryRepository(session=self.session)
