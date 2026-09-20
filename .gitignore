@@ -28,3 +28,5 @@ __pycache__/
 *.docx
 data.json
 checking.py
+old_parser.py
+old_database.py

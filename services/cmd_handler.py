@@ -1,7 +1,7 @@
 import os
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
-from services.Datbase import DataBase
+from services.old_database import DataBase
 import asyncio
 
 load_dotenv()

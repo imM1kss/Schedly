@@ -1,253 +1,189 @@
 #imports
-import os
 import requests
-import glob
-import logging
-import re
+import asyncio
+import time
+import io
+import aiohttp
 
 from docx import Document
-from vk_api import VkApi
+from vkbottle import API
 from dotenv import load_dotenv
-from datetime import datetime
-from services.Datbase import DataBase
-from typing import Optional, Dict, List
-from time import sleep
+from os import getenv
 from services.logging_config import setup_logging
-from pathlib import Path
+from logging import getLogger
+from typing import List
+from vkbottle_types.objects import WallWallpostFull
+from services.redis_hub import RedisHub
+from urllib.parse import quote
+from vkbottle.http import AiohttpClient
+from services.database import Database, async_session
 
-#logger init
-setup_logging()
-logger = logging.getLogger("parser")
 
-#load values from .env
+#base funcs
 load_dotenv()
+setup_logging()
+log = getLogger("parser")
+rhub = RedisHub()
 
 #const
-TOKEN = os.getenv('access_token')
-GROUP_ID = os.getenv('schedule_id')
-ASSETS_DIR = Path('assets')
+TOKEN = getenv("access_token")
+GROUP_ID = getenv("schedule_id")
+VK_GATEWAY_API = getenv("API_GATEWAY_VK")
+YCF_PROXY_URL = getenv("YCF_PROXY_URL")
+YCF_SECRET = getenv("YCF_SECRET")
+
+#vk api
 
 
-class VkGroup:
-    global TOKEN, GROUP_ID #global values
+api = API(token=TOKEN)
+api.API_URL = VK_GATEWAY_API
 
-    #init constructor
-    def __init__(self, token=TOKEN, group_id=GROUP_ID):
-        self.token = token
-        self.group_id = group_id
-    
-    #connect to vk group schedule wall
-    def _connect_wall(self) -> Dict:
-        vk_session = VkApi(token=self.token) # session
-        vk_api = vk_session.get_api() # connect api
+#cache service
+async def get_posts(
+    api: API,
+    group_id: int,
+    count: int = 3,
+    ttl: int = 100
+) -> List[dict]:
 
-        group_id = vk_api.groups.getById(group_id=self.group_id)[0]["id"] #get id group
+    cache_key = f"cache:vk:wall:{group_id}"
 
-        #get 5 last posts from wall
-        wall = vk_api.wall.get(
-            owner_id=-group_id,
-            count=5
-        )
+    cached_posts = await rhub.cache.get_json(cache_key)
+    if cached_posts:
+        log.info(f"[CACHE] Return {count} posts from Redis cache")
+        return cached_posts[:count]
 
-        return wall
-    
-    
-    #get file name of .docx with schedule
-    def get_file_name(self) -> List[str] | List:
-        wall = self._connect_wall() #connecting wall
-
-        for post in wall.get("items", []): #iterate list with posts
-            for att in post.get("attachments", []):#iterate attachemsts in every post
-
-                att_type = att.get("type") # type of attachment
-
-                if att_type == "doc": # only document type
-
-                    att_title = att.get("doc", {}).get("title") #get title of document
-
-                    return att_title
-
-        return 
-
-    def get_new_date(self) -> str:
-        att_title = self.get_file_name()
-
-        
-        date = text2date(att_title) #converting title to date
-        return date
-
-
-    # get schedule document downliad link
-    def get_link(self) -> str:
-        wall = self._connect_wall() #connecting wall
-
-        file_name = self.get_file_name() #get file name
-        if file_name is None:
-            logger.info("file name in get link func is None")
-            return
-
-        for post in wall.get("items", []): #iterate list with posts
-            for att in post.get("attachments", []): # iterate attacments in every post
-
-                att_type = att.get("type") # type of attachment
-
-                if att_type == "doc": #only document tipe
-
-                    att_title = att.get("doc", {}).get("title") # doc title
-
-                    if att_title == file_name: # only file with file_name
-
-                        att_url = att.get("doc", {}).get("url") #get download link
-                        logger.info("Parser get download link %s", att_url)
-
-                        return att_url
-        
-        return
-
-
-#main function
-def run_parser() -> bool:
-    try:
-        logger.info("Парсер расписания запустился!")
-        #Classes
-        data = DataBase()
-        group = VkGroup()
-        #get dates
-        last_date = data.get_last_schedule_date()
-        logger.info(f"Парсер получил последнюю дату: {last_date}")
-        new_date = group.get_new_date()
-        logger.info(f"Парсер получил новую дату: {new_date}")
-
-
-        if new_date > last_date:
-            link = group.get_link()
-            logger.info(f"Парсер получил ссылку на скачивание файла расписания: {link}")
-            if download_file(link):
-                logger.info(f"Парсер скачал файл расписания")
-                schedule = get_schedule()
-                logger.info(f"Парсер получил расписание")
-                if schedule:
-                    for cell in schedule:
-                        if data.ensure_lesson(group_name=cell[0],
-                                           subject_name=cell[2],
-                                           lesson_num=cell[1],
-                                           classroom=cell[3],
-                                           date=new_date):
-                            logger.info(f"Парсер занес в базу расписание для группы {cell[0]}")
-                    return True
-        return False
-    except Exception:
-        logger.exception("Exception:")
-
-# function converter mixed names to numbers
-def convert_group_name(group_name:Optional[str] = None) -> str:
-    if group_name is None:
-        return None
-    
-    result = re.sub(r'\D', '', group_name)
-    return result 
-
-def text2date(text:Optional[str] = None) -> str:
-    if text is None:
-        return
-    
-    date_str = text.replace(".docx", "")
-    dt = datetime.strptime(date_str, "%d.%m.%Y")
-    date = dt.strftime("%Y-%m-%d")
-
-    return date
-
-def download_file(link:Optional[str] = None) -> bool:
-    if link is None:
-        return False
-
-    #get file_name and file_path with schedule
-    filename = ASSETS_DIR / "schedule.docx"
-    file_path = os.path.join(os.getcwd(), filename)
-
-    #request to link
-    response = requests.get(link, stream=True)
-    response.raise_for_status()
-
-    logger.info("Parser take http request to %s. Status: %s", link, response.status_code)
-
-    remove_all_schedule() # delete all *.docx
-
-    #write schedule to schedule.docx
-    with open(file_path, "wb") as f:
-        for chunk in response.iter_content(chunk_size=8192):
-            f.write(chunk)
-    
-    logger.info("File was downloaded. Path: %s", file_path)
-
-    return True
-
-#get schedule from schedule.docx
-def get_schedule() -> List:
-    doc = Document((ASSETS_DIR / "schedule.docx"))
-    schedule = []
-
-    if not doc.tables:
-        return schedule
-
-    table = doc.tables[0]
-    data = DataBase()
-
-    for row in table.rows:
-        for name in data.get_group_names():
-            cells = clean([cell.text.strip() for cell in row.cells])
-
-            if len(cells) == 4:
-                if name == convert_group_name(cells[0]):
-                    schedule.append([
-                        name,
-                        cells[-3],
-                        cells[-2],
-                        cells[-1]
-                    ])
-            elif len(cells) > 4:
-                if name == convert_group_name(cells[1]):
-                    schedule.append([
-                        name,
-                        cells[-3],
-                        cells[-2],
-                        cells[-1]
-                    ])
-            elif len(cells) == 3:
-                if name == convert_group_name(cells[0]):
-                    schedule.append([
-                        name,
-                        cells[-2],
-                        cells[-1],
-                        "Пусто"
-                    ])
-
-    return schedule
-
-
-def clean(items:List) -> List:
-    result = []
-    for item in items:
-        if item and item not in result:
-            result.append(item)
-    return result
-
-#delete all *.docx
-def remove_all_schedule() -> None:
-    for file_path in glob.glob(os.path.join(os.getcwd() / ASSETS_DIR, "*.docx")):
-        os.remove(file_path)
-    logger.info("All .docx removed")
-
-
-
-if __name__ == '__main__':
-    while True:
+    for att in range(1,4):
         try:
-            result = run_parser()
-            logger.info(f"Парсер выполнил свою работу и пошел спать! Результат - {result}")
-            sleep(60)
-        except KeyboardInterrupt:
-            logger.info("Парсер выключен!")
-            break
+            response = await api.wall.get(
+                owner_id = -group_id,
+                count = count
+            )
+
+            posts_data = [post.model_dump() for post in response.items]
+            posts_data.reverse()
+
+            await rhub.cache.set_json(cache_key, posts_data, ttl=ttl)
+            log.info(f"[CAHCE] The parser downloaded data from VK wall and cached it in Redis")
+
+            return posts_data[:count]
+        except Exception as e:
+            log.warning(f"Critical network error during get posts | {att}/3 attemps")
+            await asyncio.sleep(2)
+
+    log.error("Failed get posts after 3 attemps")
+    return []
+    
+
+
+async def get_unprocessed_docx(api: API, group_id: int, count: int = 3) -> List[dict]:
+    posts = await get_posts(api, group_id, count)
+    new_files = []
+
+    for post in posts:
+
+        attachments = post.get("attachments") or []
+
+        for att in attachments:
+            if att.get("type") == "doc":
+                doc = att.get('doc') or {}
+
+                title = doc.get('title', "")
+                url = doc.get("url")
+                doc_id = doc.get("id")
+
+                if title.lower().endswith(".docx") and url and doc_id:
+                    is_new = await rhub.loadhistory.check(target="schedule", doc_id=doc_id)
+                    if is_new:
+                        new_files.append({"title":title, "url":url, "doc_id":doc_id})
+                        log.info(f"New schedule file finded succesful: {title}")
+    return new_files
+
+async def download_docx(title: str, url: str) -> Document | None:
+
+    log.info(f"Starting secure download {title} via YCF")
+    safe_target_url = quote(url, safe="")
+    request_url = f"{YCF_PROXY_URL}?target_url={safe_target_url}"
+
+    headers = {
+        "x-proxy-secret": YCF_SECRET
+    }
+    for att in range(1,4):
+        try:
+            connector = aiohttp.TCPConnector(force_close=True, enable_cleanup_closed=True)
+            async with aiohttp.ClientSession(connector=connector) as session:
+
+                async with session.get(request_url, headers=headers) as response:
+                    if response.status == 403:
+                        log.error("YCF access denied (Invalid Secret Code)")
+                        return None
+                    elif response.status != 200:
+                        log.error(f"Error proxing {title}. Status YCF {response.status}")
+                        return None
+
+                    file_bytes = await response.read()
+
+            virtual_file = io.BytesIO(file_bytes)
+            doc = Document(virtual_file)
+            if doc:
+                log.info(f"Document {title} downloaded succesful")
+                return doc
+        except (aiohttp.ClientError, ConnectionResetError) as e:
+            log.warning(f"Network error during download {title} | {att} atts/3")
+            await asyncio.sleep(2)
         except Exception:
-            logger.info("Exception: ")
+            log.exception(F"Critical error during read {title}: ")
+            return None
+    log.error(f"Failed to download {title} after 3 attemps")
+    return None
+
+
+
+
+async def run_parser():
+    vk_connector = aiohttp.TCPConnector(force_close=True, enable_cleanup_closed=True)
+    vk_session = aiohttp.ClientSession(connector=vk_connector)
+    api.http_client = AiohttpClient(session=vk_session)
+
+    async with rhub:
+        while True:
+            try:
+                # main code
+                
+                group_id = int(GROUP_ID) if GROUP_ID and GROUP_ID.isdigit() else 12345678
+
+                files = await get_unprocessed_docx(api, group_id, count=3)
+
+                for fl in files:
+                    #doc envs
+                    doc_title = fl.get("title")
+                    doc_id = fl.get("doc_id")
+                    doc_url = fl.get("url")
+
+                    if not all([doc_url, doc_title, doc_id]):
+                        raise ValueError("doc_url or doc_title or doc_id is empty")
+
+                    doc = await download_docx(title=doc_title, url=doc_url)
+                    if doc:
+                        log.info(f"Ready to parse tables from {doc_title}")
+
+                        async with async_session() as session:
+                            db = Database(session)
+
+                            await db.download_history.add(doc_id=int(doc_id), title=doc_title)
+                            log.info(f"Document {doc_title} saved in Postgre")
+
+            # Exception handler 
+            except Exception:
+                log.exception("Exception: ")
+
+            await asyncio.sleep(100)
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(run_parser())
+    except KeyboardInterrupt:
+         log.info("Parser truned off")
+
+
+

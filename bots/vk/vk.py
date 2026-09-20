@@ -1,9 +1,9 @@
 import asyncio
-from services.config_vk import bot
+from bots.vk.config_vk import bot
 from vkbottle import BaseStateGroup
 from vkbottle.bot import Message, MessageEvent
 import re
-from services.Datbase import DataBase
+from services.old_database import DataBase
 from typing import Optional, List, Dict, Tuple
 from docx import Document
 from vkbottle import Keyboard, KeyboardButtonColor, Callback, GroupEventType

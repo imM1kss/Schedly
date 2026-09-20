@@ -306,6 +306,10 @@ class DownloadHistoryModel(BaseModel):
         nullable=False,
         unique=True
     )
+    title: Mapped[str] = mapped_column(
+        String,
+        nullable=False
+    )
 
 
 #----------REPOS-----------
