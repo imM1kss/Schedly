@@ -11,18 +11,29 @@ from enum import IntEnum
 from datetime import date
 from typing import List, TypeVar, Generic, Sequence
 from cryptography.fernet import Fernet
+from services.logging_config import setup_logging
+from logging import getLogger
 
 load_dotenv()
+setup_logging()
 
+log = getLogger("database")
 
 DB_URL = f"postgresql+asyncpg://{getenv('DB_USER')}:{getenv('DB_PASS')}@127.0.0.1:{getenv('DB_PORT')}/test_db"
-engine = create_async_engine(DB_URL, echo=True)
+engine = create_async_engine(DB_URL, echo=False)
 
 
 async_session = async_sessionmaker(engine, expire_on_commit=False)
 
 SECRET_KEY = getenv("DB_ENC_KEY").encode()
 cipher = Fernet(SECRET_KEY)
+
+#-----------OTHER METHODS-------------
+
+async def init_models():
+    async with engine.begin() as conn:
+        await conn.run_sync(BaseModel.metadata.create_all)
+
 
 #----------Encryption-------------
 
@@ -110,7 +121,7 @@ class UserModel(BaseModel):
         CheckConstraint(
             "tg_id IS NOT NULL OR vk_id IS NOT NULL",
             name="check_user_tg_vk"
-        )
+        ),
     )
 
 class GroupModel(BaseModel):
@@ -120,7 +131,7 @@ class GroupModel(BaseModel):
         autoincrement=True,
         primary_key=True
     )
-    designation: Mapped[str] = mapped_column(
+    code: Mapped[str] = mapped_column(
         unique=True,
         nullable=False
     )
@@ -139,7 +150,7 @@ class GroupModel(BaseModel):
         CheckConstraint(
             "tg_id IS NOT NULL OR vk_id IS NOT NULL",
             name="check_group_tg_vk"
-        )
+        ),
     )
 
 class SubjectModel(BaseModel):
@@ -165,7 +176,7 @@ class SubjectModel(BaseModel):
         UniqueConstraint(
             "group_id","title", 
             name="uniq_subj_groupid_title"
-        )
+        ),
     )
 
 class ScheduleModel(BaseModel):
@@ -208,7 +219,7 @@ class ScheduleModel(BaseModel):
         UniqueConstraint(
             "group_id","period","date",
             name="uniq_schedule_groupid_period_date"
-        )
+        ),
     )
 
 class GradeModel(BaseModel):
@@ -242,7 +253,7 @@ class GradeModel(BaseModel):
         CheckConstraint(
             "grade BETWEEN 1 AND 5",
             name="check_grade"
-        )
+        ),
     )
 
 class HomeworkModel(BaseModel):
@@ -409,7 +420,7 @@ class UserRepository(BaseRepository[UserModel]):
             if not user.academic_role and academic_role:
                 user.academic_role = academic_role
 
-            if not admin_role and admin_role:
+            if not user.admin_role and admin_role:
                 user.admin_role = admin_role
 
             await self.session.commit()
@@ -419,8 +430,9 @@ class UserRepository(BaseRepository[UserModel]):
         params.pop("self")
         params_clean = {k:v for k,v in params.items() if v is not None}
 
-        return await self.add(**params_clean)
-    
+        user = await self.add(**params_clean)
+        log.info(f"New user added to databse")
+        return user
 
         
         
@@ -433,6 +445,36 @@ class GroupRepository(BaseRepository[GroupModel]):
     def __init__(self, session: AsyncSession):
         super().__init__(GroupModel, session)
 
+    async def ensure(self,
+            code:str | None = None,
+            tg_id: int | None = None,
+            vk_id: int | None = None
+    ) -> GroupModel:
+
+        if not any((tg_id,vk_id)):
+            raise ValueError("tg_id or vk_id is NoneType object")
+
+        if not code:
+            raise ValueError("Group code is NoneType object")
+
+        params = locals()
+        params.pop("self")
+        params_clean = {k:v for k,v in params.items() if v is not None}
+
+        group = await self.get_by(**params_clean)
+
+        if group:
+            if not group.tg_id and tg_id:
+                group.tg_id = tg_id
+            if not group.vk_id and vk_id:
+                group.vk_id = vk_id
+
+            await self.session.commit()
+            return group
+
+        group = await self.add(**params_clean)
+        log.info("New group added to the database")
+        return group
     
 
 
@@ -440,6 +482,31 @@ class GroupRepository(BaseRepository[GroupModel]):
 class SubjectRepository(BaseRepository[SubjectModel]):
     def __init__(self, session: AsyncSession):
         super().__init__(SubjectModel, session)
+
+
+    async def ensure(self,
+           title: str | None = None,
+           group_id: int | None = None          
+    ) -> SubjectModel:
+        
+        if not all((title, group_id)):
+            raise ValueError("Title or Group id are NoneType objects")
+
+        params = locals()
+        params.pop("self")
+
+        search_items = {k:v for k,v in params.items() if v is not None}
+
+        subject = await self.get_by(**search_items)
+
+        if subject:
+            return subject
+
+        subject = await self.add(**params)
+        log.info("New subject added to the database")
+
+        
+        
 
 
 class ScheduleRepository(BaseRepository[ScheduleModel]):

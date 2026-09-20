@@ -4,6 +4,7 @@ import asyncio
 import time
 import io
 import aiohttp
+import re
 
 from docx import Document
 from vkbottle import API
@@ -17,6 +18,8 @@ from services.redis_hub import RedisHub
 from urllib.parse import quote
 from vkbottle.http import AiohttpClient
 from services.database import Database, async_session
+from datetime import date
+from sqlalchemy.exc import IntegrityError
 
 
 #base funcs
@@ -31,6 +34,12 @@ GROUP_ID = getenv("schedule_id")
 VK_GATEWAY_API = getenv("API_GATEWAY_VK")
 YCF_PROXY_URL = getenv("YCF_PROXY_URL")
 YCF_SECRET = getenv("YCF_SECRET")
+
+MONTHS = {
+    "января":1, "февраля":2, "марта":3, "апреля":4,
+    "мая":5, "июня":6, "июля":7, "августа":8,
+    "сентября":9, "октября":10, "ноября":11, "декабря":12
+}
 
 #vk api
 
@@ -137,7 +146,41 @@ async def download_docx(title: str, url: str) -> Document | None:
     log.error(f"Failed to download {title} after 3 attemps")
     return None
 
+def extract_date_from_header(header_cells: List) -> date | None:
+    for cell in header_cells:
+        clean_str = cell.replace('\xa0', ' ').lower()
 
+        pattern = r"(\d{1,2})\s+([а-я]+)\s+(\d{4})"
+        match = re.search(pattern, clean_str, flags=re.IGNORECASE)
+        if match:
+            day = int(match.group(1))
+            month_str = match.group(2)
+            year = int(match.group(3))
+
+            month = MONTHS.get(month_str.lower())
+            if month:
+                return date(year, month, day)
+    return None
+
+def clean(raw_cells:tuple) -> List:
+    cells = []
+
+    for cell in raw_cells:
+        text = cell.text.strip()
+        if text and text not in cells:
+            cells.append(text)
+
+    if len(cells) == 1:
+        cells = cells[0].split("\n")
+    
+    elif len(cells) > 1:
+        pattern = r"^\d+-\d+$"
+
+        for index,cell in enumerate(cells):
+            if re.match(pattern, cell):
+                return cells[index:]
+    
+    return cells
 
 
 async def run_parser():
@@ -170,8 +213,58 @@ async def run_parser():
                         async with async_session() as session:
                             db = Database(session)
 
-                            await db.download_history.add(doc_id=int(doc_id), title=doc_title)
-                            log.info(f"Document {doc_title} saved in Postgre")
+                            try:
+                                await db.download_history.add(doc_id=int(doc_id), title=doc_title)
+                                log.info(f"Document {doc_title} saved in Postgre")
+                            except IntegrityError:
+                                await session.rollback()
+                                log.info(f"Document {doc_title} already exists in the Postgre")
+
+                            if not doc.tables:
+                                log.warning(f"Parser didn't find any tables in doc {doc_title}")
+                                return
+                            
+                                
+                            for index, row in enumerate(doc.tables[0].rows):
+                                cells = clean(row.cells)
+                        
+                                if index == 0:
+                                    schedule_date = extract_date_from_header(cells)
+                                    log.info(f"Parser found schedule date {schedule_date} in doc {doc_title}")
+                                    continue
+                        
+                                if not cells:
+                                    continue
+
+                                db_groups = await db.groups.get_all_by()
+                                
+                                group_map = {re.sub(r"\D", "", g.code): g.id for g in db_groups}
+                    
+                                raw_group = cells[0]
+                                group_norm = re.sub(r'\D', '', raw_group)
+                    
+                                if group_norm in group_map:
+                                    group_id = group_map[group_norm]
+                    
+                                    period = int(re.sub(r'\D', '', cells[1]))
+                                    subj_title = cells[2]
+                                    classroom = cells[3] if len(cells) > 3 else "Нет"
+                    
+                                    subject = await db.subjects.ensure(title=subj_title, group_id=group_id)
+                                    log.info(f"New schedule {schedule_date} found for group {group_norm}")
+                    
+                                    try:
+                                        await db.schedule.add(
+                                            group_id = group_id,
+                                            subj_id = subject.id,
+                                            period = period,
+                                            classroom = classroom,
+                                            date = schedule_date
+                                        )
+                                        log.info(f"Schedule {schedule_date} added for group {group_norm}: {period}, {subj_title} {classroom}")
+                                    except IntegrityError:
+                                        await session.rollback()
+
 
             # Exception handler 
             except Exception:
