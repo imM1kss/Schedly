@@ -16,7 +16,7 @@ import json
 from datetime import datetime
 from services.logging_config import setup_logging
 import logging
-from services.cmd_handler import get_groq_response
+# from services.cmd_handler import get_groq_response
 from ast import literal_eval
 import pickle
 import aiofiles
@@ -38,7 +38,7 @@ GROUP_ID = getenv('schedule_id')
 ASSETS_DIR = Path('assets')
 
 if not data.get_admins():
-    vk_id = getenv("owner_vk_id")
+    vk_id = getenv("owner_id")
     data.ensure_user(vk_id=vk_id,role="admin",full_name="Вячеслав М")
 
 def convert_group_name(group_name:str = None) -> str:
@@ -497,41 +497,41 @@ async def start_message(message: Message):
                                       delete_for_all=True)
         
 
-    else:
-        all_chunks = await get_all_texts_recursive(message)
-        full_text = ". ".join(all_chunks)
-        result = await get_groq_response(message=full_text,group_name=data.get_group_name(vk_id=message.peer_id))
+    # else:
+    #     all_chunks = await get_all_texts_recursive(message)
+    #     full_text = ". ".join(all_chunks)
+    #     # result = await get_groq_response(message=full_text,group_name=data.get_group_name(vk_id=message.peer_id))
 
-        if result != "None":
-            result = literal_eval(result.strip())
-            if len(result) != 3:
-                return
+    #     if result != "None":
+    #         result = literal_eval(result.strip())
+    #         if len(result) != 3:
+    #             return
             
-            att_urls = await get_all_photos_recursive(message)
-            att_names = []
-            for url in att_urls:
-                name = await download_photo(url)
-                att_names.append(name)
+    #         att_urls = await get_all_photos_recursive(message)
+    #         att_names = []
+    #         for url in att_urls:
+    #             name = await download_photo(url)
+    #             att_names.append(name)
 
             
-            subject_name = data.get_subject_name(subject_id=result[0])
-            data.ensure_homework(vk_id=message.peer_id, subject_name=subject_name, description=f"{result[1]}", attachments=att_names)
-            keyboard = close_kb()
-            await bot.api.messages.send(peer_id=message.peer_id,
-                                        random_id=randint(0,100000),
-                                        silent = True,
-                                        message=f"ДЗ по {subject_name} добавлено!",
-                                        keyboard=keyboard)
+    #         subject_name = data.get_subject_name(subject_id=result[0])
+    #         data.ensure_homework(vk_id=message.peer_id, subject_name=subject_name, description=f"{result[1]}", attachments=att_names)
+    #         keyboard = close_kb()
+    #         await bot.api.messages.send(peer_id=message.peer_id,
+    #                                     random_id=randint(0,100000),
+    #                                     silent = True,
+    #                                     message=f"ДЗ по {subject_name} добавлено!",
+    #                                     keyboard=keyboard)
 
 
-        else:
-            for Id in data.get_admins():
-                vk_id = data.get_user_vk_id(Id)
-                await bot.api.messages.send(
-                    user_id=vk_id,
-                    message=f"Не получилось добавить дз '{text}' в группе {message.peer_id} пользователем {message.from_id}",
-                    random_id=randint(0,1000000)
-                )
+    #     else:
+    #         for Id in data.get_admins():
+    #             vk_id = data.get_user_vk_id(Id)
+    #             await bot.api.messages.send(
+    #                 user_id=vk_id,
+    #                 message=f"Не получилось добавить дз '{text}' в группе {message.peer_id} пользователем {message.from_id}",
+    #                 random_id=randint(0,1000000)
+    #             )
 
 async def download_photo(url):
     try:
@@ -635,51 +635,7 @@ async def handle_keyboard_events(event: MessageEvent):
             cmids=[event.object.conversation_message_id],
             delete_for_all=True
         )
-
-        is_create = None
-
-        if data.get_group_id(name=name) is not None:
-            await event.show_snackbar("""Извините, но ваша заявка отклонена, т.к. такая группа уже привязана!
-                                      (P.s. я сообщил администратору)""")
-            is_create = False
-            await bot.state_dispenser.delete(peer_id=peer_id)
-        else:
-            is_create = True
-            await event.show_snackbar(f"Заявка на привязку вашего чата к группе {name} на рассмотрение!")
         
-        admins = data.get_admins()
-        for Id in admins:
-            vk_id = data.get_user_vk_id(user_id=Id)
-
-            if vk_id:
-                if is_create is False:
-                    await bot.api.messages.send(
-                        user_id=vk_id,
-                        random_id=randint(0,10000),
-                        message=f"Пользователь {user_link} пытался присоеденить группу {name} к peer_id: {peer_id}"
-                    )
-                elif is_create is True:
-                    await bot.api.messages.send(
-                        user_id=vk_id,
-                        random_id = randint(0,10000),
-                        message = f"Пользователь {user_link} хочет создать группу {name} с peer_id: {peer_id}",
-                        keyboard=confirm_adm_kb(name=name, peer_id=peer_id)
-                    )
-    elif payload.get("act") == "rejected":
-        pl_peer_id = payload.get("peer_id")
-        name = payload.get("name")
-        
-        await bot.api.messages.send(peer_id=pl_peer_id,
-                                    message=f"Вам отказано в привязке вашего чата к группе {name}",
-                                    random_id=randint(0,100000))
-        await bot.api.messages.delete(
-            peer_id = peer_id,
-            delete_for_all=True,
-            cmids=[event.object.conversation_message_id]
-        )
-        await bot.state_dispenser.delete(peer_id=pl_peer_id)
-
-    elif payload.get("act") == "accepted":
         pl_peer_id = payload.get("peer_id")
         name = payload.get("name")
 
@@ -687,24 +643,11 @@ async def handle_keyboard_events(event: MessageEvent):
             await bot.api.messages.send(
                 peer_id=pl_peer_id,
                 random_id = randint(0,100000),
-                message=f"Ваша заявка одобрена: чат был успешно привязан к группе {name}!"
+                message=f"Чат был успешно привязан к группе {name}!"
             )
-        else:
-            await bot.api.messages.send(peer_id=pl_peer_id,
-                                        random_id=randint(0,10000),
-                                        message=f"Ваша чат по каким-то причинам не может быть привязана! Я уже сообщил Админу, подождите!")
-            admins = data.get_admins()
-            for Id in admins:
-                vk_id = data.get_user_vk_id(user_id=Id)
-
-                if vk_id:
-                    await bot.api.messages.send(user_id=vk_id,
-                                                random_id = randint(0,100000),
-                                                message=f"Какие-то неполадки: не удалось привязать чат {pl_peer_id} к {name}")
-            await bot.api.messages.delete(peer_id=peer_id,
-                                          delete_for_all=True,cmids=[event.object.conversation_message_id])
         
-        await bot.state_dispenser.delete(peer_id=pl_peer_id)
+
+    
     
     elif payload.get("act") == "close":
         

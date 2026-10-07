@@ -27,6 +27,9 @@ load_dotenv()
 TOKEN = os.getenv('access_token')
 GROUP_ID = os.getenv('schedule_id')
 ASSETS_DIR = Path('assets')
+VK_GATEWAY_API = getenv("API_GATEWAY_VK")
+YCF_PROXY_URL = getenv("YCF_PROXY_URL")
+YCF_SECRET = getenv("YCF_SECRET")
 
 
 class VkGroup:
@@ -41,6 +44,7 @@ class VkGroup:
     def _connect_wall(self) -> Dict:
         vk_session = VkApi(token=self.token) # session
         vk_api = vk_session.get_api() # connect api
+        vk_api.API_URL = VK_GATEWAY_API
 
         group_id = vk_api.groups.getById(group_id=self.group_id)[0]["id"] #get id group
 
@@ -176,7 +180,7 @@ def download_file(link:Optional[str] = None) -> bool:
     response = requests.get(link, stream=True)
     response.raise_for_status()
 
-    logger.info("Parser take http request to %s. Status: %s", link, response.status_code)
+    logger.info("Parser take http request to %s. Status: %s", link)
 
     remove_all_schedule() # delete all *.docx
 
