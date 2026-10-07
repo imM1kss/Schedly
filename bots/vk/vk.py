@@ -568,7 +568,7 @@ async def get_all_texts_recursive(msg) -> list:
     return texts
 
 async def get_all_photos_recursive(msg) -> list:
-    "
+    
     photo_urls = []
 
     # 1. Ищем фото в текущем сообщении
